@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 type Card struct {
 	rank int
