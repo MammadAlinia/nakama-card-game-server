@@ -1,0 +1,46 @@
+﻿
+services:
+  postgres:
+    image: postgres:16.8-alpine
+    container_name: nakama-postgres
+    environment:
+      POSTGRES_DB: nakama
+      POSTGRES_USER: nakama
+      POSTGRES_PASSWORD: localdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nakama -d nakama"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  nakama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nakama-healthcheck:3.41.0
+    container_name: nakama
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        /nakama/nakama migrate up \
+          --database.address nakama:localdb@postgres:5432/nakama
+        exec /nakama/nakama \
+          --name nakama \
+          --database.address nakama:localdb@postgres:5432/nakama \
+          --logger.level DEBUG \
+          --runtime.path /nakama/data/modules
+    ports:
+      - "7349:7349"
+      - "7350:7350"
+      - "7351:7351"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
