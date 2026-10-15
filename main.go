@@ -10,6 +10,9 @@ import (
 const rpcHealthCheck = "healthcheck"
 const mmad = "mmad"
 
+const matchBlackjack = "blackjack"
+const rpcBlackjackCreate = "blackjack_create"
+
 func InitModule(
 	ctx context.Context,
 	logger runtime.Logger,
@@ -31,6 +34,23 @@ func InitModule(
 		logger.Error("Failed to register %s RPC: %v", mmad, err)
 		return err
 	}
+
+	// match
+	if err := initializer.RegisterMatch(matchBlackjack, NewBlackjackMatch); err != nil {
+		return err
+	}
+	if err := initializer.RegisterRpc(rpcBlackjackCreate, RpcBlackjackCreate); err != nil {
+		return err
+	}
 	logger.Info("Registered RPC: %s", rpcHealthCheck)
 	return nil
+}
+func NewBlackjackMatch(
+	ctx context.Context,
+	logger runtime.Logger,
+	db *sql.DB,
+	nk runtime.NakamaModule,
+) (runtime.Match, error) {
+	// Return a new *BlackjackMatch and nil error.
+	return &BlackjackMatch{}, nil
 }
