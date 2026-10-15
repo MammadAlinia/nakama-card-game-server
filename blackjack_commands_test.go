@@ -63,7 +63,7 @@ func TestMatchLoopStartAdmission(t *testing.T) {
 			before := *state
 			match := &BlackjackMatch{}
 			logger := &commandTestLogger{}
-			got := match.MatchLoop(context.Background(), logger, nil, nil, nil, 10, state, []runtime.MatchData{tt.message})
+			got := match.MatchLoop(context.Background(), logger, nil, nil, &snapshotTestDispatcher{}, 10, state, []runtime.MatchData{tt.message})
 			if got != state {
 				t.Errorf("message handling should retain the match state; got %T", got)
 			}
@@ -96,7 +96,7 @@ func TestMatchLoopStartAfterIgnoredMessages(t *testing.T) {
 		commandTestMessage{owner, 1, nil},
 	}
 	match := &BlackjackMatch{}
-	got := match.MatchLoop(context.Background(), &commandTestLogger{}, nil, nil, nil, 10, state, messages)
+	got := match.MatchLoop(context.Background(), &commandTestLogger{}, nil, nil, &snapshotTestDispatcher{}, 10, state, messages)
 	if got != state || state.round == nil {
 		t.Fatal("ignored messages must not prevent a later valid Start in the same batch")
 	}
@@ -123,7 +123,7 @@ func TestMatchLoopRejectedStartsPreserveActiveRound(t *testing.T) {
 			logger := &commandTestLogger{}
 			match := &BlackjackMatch{}
 			messages := []runtime.MatchData{commandTestMessage{owner, 1, nil}, commandTestMessage{owner, 1, nil}}
-			got := match.MatchLoop(context.Background(), logger, nil, nil, nil, 10, state, messages)
+			got := match.MatchLoop(context.Background(), logger, nil, nil, &snapshotTestDispatcher{}, 10, state, messages)
 			if got != state || *state != before {
 				t.Fatal("rejected Starts should preserve the match and its active round")
 			}
@@ -174,7 +174,7 @@ func TestMatchLoopHitAndStand(t *testing.T) {
 			before := *state
 			logger := &commandTestLogger{}
 			match := &BlackjackMatch{}
-			got := match.MatchLoop(context.Background(), logger, nil, nil, nil, 10, state, []runtime.MatchData{commandTestMessage{owner, tt.opCode, nil}})
+			got := match.MatchLoop(context.Background(), logger, nil, nil, &snapshotTestDispatcher{}, 10, state, []runtime.MatchData{commandTestMessage{owner, tt.opCode, nil}})
 			if got != state || *state != before {
 				t.Fatal("a valid action should retain the match, player information, and round pointer")
 			}
@@ -242,7 +242,7 @@ func TestMatchLoopHitAndStandRejectionsPreserveState(t *testing.T) {
 					beforeCards = slices.Clone(state.round.deck.cards)
 				}
 				match := &BlackjackMatch{}
-				got := match.MatchLoop(context.Background(), &commandTestLogger{}, nil, nil, nil, 10, state,
+				got := match.MatchLoop(context.Background(), &commandTestLogger{}, nil, nil, &snapshotTestDispatcher{}, 10, state,
 					[]runtime.MatchData{commandTestMessage{tt.presence, opCode, tt.data}})
 				if got != state || *state != before {
 					t.Fatal("a rejected action should preserve the match state")
@@ -274,7 +274,7 @@ func TestMatchLoopHitThenStandBatch(t *testing.T) {
 	}
 	logger := &commandTestLogger{}
 	match := &BlackjackMatch{}
-	got := match.MatchLoop(context.Background(), logger, nil, nil, nil, 10, state, messages)
+	got := match.MatchLoop(context.Background(), logger, nil, nil, &snapshotTestDispatcher{}, 10, state, messages)
 	if got != state || state.round != round {
 		t.Fatal("processing a batch should retain the match and round")
 	}

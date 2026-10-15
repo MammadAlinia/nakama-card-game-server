@@ -112,7 +112,7 @@ func TestMatchLoopTimeout(t *testing.T) {
 			}
 			beforeRound := state.round
 			match := &BlackjackMatch{}
-			got := match.MatchLoop(context.Background(), nil, nil, nil, nil, tt.tick, state, nil)
+			got := match.MatchLoop(context.Background(), nil, nil, nil, &snapshotTestDispatcher{}, tt.tick, state, nil)
 
 			if tt.wantEnd {
 				if got != nil {
@@ -143,7 +143,7 @@ func TestMatchLoopInvalidState(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			match := &BlackjackMatch{}
-			got := match.MatchLoop(context.Background(), nil, nil, nil, nil, 0, tt.state, nil)
+			got := match.MatchLoop(context.Background(), nil, nil, nil, &snapshotTestDispatcher{}, 0, tt.state, nil)
 			if got != nil {
 				t.Errorf("MatchLoop() returned %T; want nil to end a match with invalid state", got)
 			}
@@ -287,7 +287,7 @@ func TestMatchJoinConfirmation(t *testing.T) {
 				wantState.playerPresence = tt.wantPresence
 			}
 			match := &BlackjackMatch{}
-			got := match.MatchJoin(context.Background(), nil, nil, nil, nil, 1, state, tt.presences)
+			got := match.MatchJoin(context.Background(), nil, nil, nil, &snapshotTestDispatcher{}, 1, state, tt.presences)
 			if got != state {
 				t.Errorf("MatchJoin() should retain the existing state pointer; got %T", got)
 			}
@@ -313,7 +313,7 @@ func TestMatchJoinInvalidState(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			match := &BlackjackMatch{}
-			got := match.MatchJoin(context.Background(), nil, nil, nil, nil, 0, tt.state, nil)
+			got := match.MatchJoin(context.Background(), nil, nil, nil, &snapshotTestDispatcher{}, 0, tt.state, nil)
 			if got != nil {
 				t.Errorf("MatchJoin() returned %T; want nil for invalid state", got)
 			}
@@ -336,14 +336,14 @@ func TestConfirmedJoinSurvivesTimeout(t *testing.T) {
 	if state.joined || state.playerPresence != nil {
 		t.Fatal("admission should reserve the session without confirming a join")
 	}
-	confirmedState := match.MatchJoin(context.Background(), nil, nil, nil, nil, 299, state, []runtime.Presence{presence})
+	confirmedState := match.MatchJoin(context.Background(), nil, nil, nil, &snapshotTestDispatcher{}, 299, state, []runtime.Presence{presence})
 	if confirmedState != state || !state.joined || state.playerPresence != presence {
 		t.Fatal("MatchJoin() should confirm and retain the admitted owner's presence")
 	}
 	if state.round != nil {
 		t.Error("joining should not start a blackjack round")
 	}
-	if got := match.MatchLoop(context.Background(), nil, nil, nil, nil, 1000, state, nil); got != state {
+	if got := match.MatchLoop(context.Background(), nil, nil, nil, &snapshotTestDispatcher{}, 1000, state, nil); got != state {
 		t.Errorf("a confirmed join should survive the unjoined timeout; got %T", got)
 	}
 }

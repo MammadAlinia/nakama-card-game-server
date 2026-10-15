@@ -42,9 +42,11 @@ func (m *BlackjackMatch) MatchInit(
 }
 
 const (
-	opStart int64 = 1
-	opHit   int64 = 2
-	opStand int64 = 3
+	opStart    int64 = 1
+	opHit      int64 = 2
+	opStand    int64 = 3
+	opGetState int64 = 4
+	opState    int64 = 100
 )
 
 func (m *BlackjackMatch) MatchLoop(
@@ -78,45 +80,46 @@ func (m *BlackjackMatch) MatchLoop(
 		if msgSession := msg.GetSessionId(); msgSession == "" || msgSession != match.playerSessionID {
 			continue
 		}
-
+		if len(msg.GetData()) != 0 {
+			continue
+		}
+		var actionErr error
 		switch msg.GetOpCode() {
 		case opStart:
-			if len(msg.GetData()) != 0 {
-				continue
-			}
-			err := match.startRound()
-			if err != nil {
-				logger.Warn("Start rejected for session %s: %v", match.playerSessionID, err)
-			}
+
+			actionErr = match.startRound()
+
 		case opHit:
-			if len(msg.GetData()) != 0 {
-				continue
-			}
+
 			if match.round == nil { // Match is looping while not started
-				logger.Warn("Hit rejected for session %s:  No Round Available", match.playerSessionID)
 				continue
 			}
-			err := match.round.Hit()
-			if err != nil {
-				logger.Warn("Hit rejected for session %s: %v", match.playerSessionID, err)
-				continue
-			}
+			actionErr = match.round.Hit()
+
 		case opStand:
-			if len(msg.GetData()) != 0 {
-				continue
-			}
+
 			if match.round == nil { // Match is looping while not started
-				logger.Warn("Stand rejected for session %s:  No Round Available", match.playerSessionID)
 				continue
 			}
-			err := match.round.Stand()
-			if err != nil {
-				logger.Warn("Stand rejected for session %s: %v", match.playerSessionID, err)
-			}
+			actionErr = match.round.Stand()
+
+		case opGetState:
+
 		default:
 			continue
 		}
+		if actionErr != nil {
+			logger.Warn(
+				"Command %d rejected: %v",
+				msg.GetOpCode(),
+				actionErr,
+			)
+			continue
+		}
 
+		if err := match.sendSnapshot(dispatcher); err != nil {
+			logger.Warn("Snapshot delivery failed: %v", err)
+		}
 	}
 	return match
 }
@@ -185,8 +188,12 @@ func (m *BlackjackMatch) MatchJoin(
 			sessionID == match.playerSessionID {
 			match.playerPresence = presence
 			match.joined = true
+			if err := match.sendSnapshot(dispatcher); err != nil {
+				logger.Warn("Initial snapshot delivery failed: %v", err)
+			}
 			return match
 		}
+
 	}
 	return match
 }

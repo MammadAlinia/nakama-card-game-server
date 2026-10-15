@@ -16,6 +16,7 @@ const (
 	PhasePlayerTurn Phase = "player_turn"
 	PhaseDealerTurn Phase = "dealer_turn"
 	PhaseFinished   Phase = "finished"
+	PhaseWaiting    Phase = "waiting"
 )
 
 type Outcome string
