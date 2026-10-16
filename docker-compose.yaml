@@ -1,4 +1,6 @@
 ﻿
+name: card-server-nakama
+
 services:
   postgres:
     image: postgres:16.8-alpine
