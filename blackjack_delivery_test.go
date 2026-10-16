@@ -27,6 +27,25 @@ func deliveryTestSnapshot(t *testing.T, dispatcher *snapshotTestDispatcher, inde
 	return view
 }
 
+func deliveryTestError(t *testing.T, dispatcher *snapshotTestDispatcher, index int, target runtime.Presence, command int64) CommandErrorResponse {
+	t.Helper()
+	if index >= len(dispatcher.broadcasts) {
+		t.Fatalf("missing error reply %d", index)
+	}
+	packet := dispatcher.broadcasts[index]
+	if packet.opCode != 101 || !packet.reliable || packet.sender != nil || len(packet.targets) != 1 || packet.targets[0] != target {
+		t.Fatalf("error reply must be reliable opcode 101 addressed only to the joined player: %+v", packet)
+	}
+	var reply CommandErrorResponse
+	if err := json.Unmarshal(packet.data, &reply); err != nil {
+		t.Fatalf("invalid error reply JSON: %v", err)
+	}
+	if reply.Command != command || reply.Message == "" {
+		t.Errorf("error reply = %+v; want command %d with a nonempty message", reply, command)
+	}
+	return reply
+}
+
 func TestMatchJoinDeliversInitialSnapshot(t *testing.T) {
 	for _, failDelivery := range []bool{false, true} {
 		name := "successful delivery"
@@ -116,25 +135,30 @@ func TestMatchLoopGetStateIsReadOnly(t *testing.T) {
 func TestMatchLoopDoesNotSendUnsolicitedSnapshots(t *testing.T) {
 	owner := matchTestPresence{"owner", "session-one"}
 	tests := []struct {
-		name     string
-		message  runtime.MatchData
-		idle     bool
-		unjoined bool
-		noRound  bool
-		finished bool
+		name      string
+		message   runtime.MatchData
+		idle      bool
+		unjoined  bool
+		noRound   bool
+		finished  bool
+		canReject bool
 	}{
 		{name: "idle tick", idle: true},
 		{name: "nil message", message: nil},
-		{name: "unknown opcode", message: commandTestMessage{owner, 99, nil}},
+		{name: "unknown opcode", message: commandTestMessage{owner, 99, nil}, canReject: true},
 		{name: "GetState from other user", message: commandTestMessage{matchTestPresence{"other-user", "session-one"}, 4, nil}},
 		{name: "GetState from other session", message: commandTestMessage{matchTestPresence{"owner", "session-two"}, 4, nil}},
 		{name: "GetState with empty session", message: commandTestMessage{matchTestPresence{"owner", ""}, 4, nil}},
-		{name: "GetState with payload", message: commandTestMessage{owner, 4, []byte(`{}`)}},
+		{name: "GetState with payload", message: commandTestMessage{owner, 4, []byte(`{}`)}, canReject: true},
+		{name: "Start with payload", message: commandTestMessage{owner, 1, []byte(`{}`)}, noRound: true, canReject: true},
+		{name: "Hit with payload", message: commandTestMessage{owner, 2, []byte(`{}`)}, canReject: true},
+		{name: "Stand with payload", message: commandTestMessage{owner, 3, []byte(`{}`)}, canReject: true},
 		{name: "GetState before joining", message: commandTestMessage{owner, 4, nil}, unjoined: true},
-		{name: "Start during active round", message: commandTestMessage{owner, 1, nil}},
-		{name: "Hit before Start", message: commandTestMessage{owner, 2, nil}, noRound: true},
-		{name: "Stand before Start", message: commandTestMessage{owner, 3, nil}, noRound: true},
-		{name: "Hit after completion", message: commandTestMessage{owner, 2, nil}, finished: true},
+		{name: "Start during active round", message: commandTestMessage{owner, 1, nil}, canReject: true},
+		{name: "Hit before Start", message: commandTestMessage{owner, 2, nil}, noRound: true, canReject: true},
+		{name: "Stand before Start", message: commandTestMessage{owner, 3, nil}, noRound: true, canReject: true},
+		{name: "Hit after completion", message: commandTestMessage{owner, 2, nil}, finished: true, canReject: true},
+		{name: "Stand after completion", message: commandTestMessage{owner, 3, nil}, finished: true, canReject: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -153,8 +177,17 @@ func TestMatchLoopDoesNotSendUnsolicitedSnapshots(t *testing.T) {
 			dispatcher := &snapshotTestDispatcher{}
 			match := &BlackjackMatch{}
 			got := match.MatchLoop(context.Background(), &commandTestLogger{}, nil, nil, dispatcher, 10, state, messages)
-			if got != state || *state != before || len(dispatcher.broadcasts) != 0 {
-				t.Fatal("idle, ignored, and rejected commands must not send snapshots or replace state")
+			if got != state || *state != before {
+				t.Fatal("idle, ignored, and rejected commands must not replace state")
+			}
+			if !tt.canReject && len(dispatcher.broadcasts) != 0 {
+				t.Fatal("idle and unauthorized messages must not generate any reply")
+			}
+			if tt.canReject {
+				if len(dispatcher.broadcasts) != 1 {
+					t.Fatalf("a rejected command must generate exactly one error reply; got %d", len(dispatcher.broadcasts))
+				}
+				deliveryTestError(t, dispatcher, 0, owner, tt.message.GetOpCode())
 			}
 		})
 	}
@@ -236,10 +269,44 @@ func TestMatchLoopActionErrorDoesNotBlockNextCommand(t *testing.T) {
 	match := &BlackjackMatch{}
 	got := match.MatchLoop(context.Background(), logger, nil, nil, dispatcher, 10, state,
 		[]runtime.MatchData{commandTestMessage{owner, 1, nil}, commandTestMessage{owner, 4, nil}})
-	if got != state || len(dispatcher.broadcasts) != 1 || len(logger.warnings) != 1 {
+	if got != state || len(dispatcher.broadcasts) != 2 || len(logger.warnings) != 1 {
 		t.Fatal("a rejected Start must not prevent a subsequent GetState in the same batch")
 	}
-	if view := deliveryTestSnapshot(t, dispatcher, 0, owner); !reflect.DeepEqual(view, state.snapshot()) {
+	deliveryTestError(t, dispatcher, 0, owner, 1)
+	if view := deliveryTestSnapshot(t, dispatcher, len(dispatcher.broadcasts)-1, owner); !reflect.DeepEqual(view, state.snapshot()) {
 		t.Error("GetState after a rejected command returned the wrong snapshot")
+	}
+}
+
+func TestMatchLoopErrorDeliveryFailureDoesNotBlockNextCommand(t *testing.T) {
+	owner := matchTestPresence{"owner", "session-one"}
+	state := &BlackjackMatchState{
+		round: snapshotTestRound(t), joined: true, ownerUserID: "owner",
+		playerSessionID: "session-one", playerPresence: owner,
+	}
+	wantView := state.snapshot()
+	dispatcher := &snapshotTestDispatcher{err: errors.New("delivery failed")}
+	logger := &commandTestLogger{}
+	match := &BlackjackMatch{}
+	got := match.MatchLoop(context.Background(), logger, nil, nil, dispatcher, 10, state,
+		[]runtime.MatchData{commandTestMessage{owner, 1, nil}, commandTestMessage{owner, 4, nil}})
+	if got != state || len(dispatcher.broadcasts) != 2 {
+		t.Fatal("failed error delivery must not retry or block the next command")
+	}
+	deliveryTestError(t, dispatcher, 0, owner, 1)
+	if view := deliveryTestSnapshot(t, dispatcher, 1, owner); !reflect.DeepEqual(view, wantView) {
+		t.Error("GetState after failed error delivery returned the wrong snapshot")
+	}
+	if len(logger.warnings) != 3 {
+		t.Errorf("want warnings for rejection, error delivery, and snapshot delivery; got %v", logger.warnings)
+	}
+	dispatcher.err = nil
+	got = match.MatchLoop(context.Background(), logger, nil, nil, dispatcher, 11, state,
+		[]runtime.MatchData{commandTestMessage{owner, 4, nil}})
+	if got != state || len(dispatcher.broadcasts) != 3 {
+		t.Fatal("GetState should recover after delivery resumes")
+	}
+	if view := deliveryTestSnapshot(t, dispatcher, 2, owner); !reflect.DeepEqual(view, wantView) {
+		t.Error("delivery failure changed the round")
 	}
 }

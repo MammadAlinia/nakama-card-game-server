@@ -47,6 +47,7 @@ const (
 	opStand    int64 = 3
 	opGetState int64 = 4
 	opState    int64 = 100
+	opError    int64 = 101
 )
 
 func (m *BlackjackMatch) MatchLoop(
@@ -80,33 +81,40 @@ func (m *BlackjackMatch) MatchLoop(
 		if msgSession := msg.GetSessionId(); msgSession == "" || msgSession != match.playerSessionID {
 			continue
 		}
-		if len(msg.GetData()) != 0 {
-			continue
-		}
 		var actionErr error
-		switch msg.GetOpCode() {
-		case opStart:
+		if len(msg.GetData()) != 0 {
+			actionErr = errors.New("commands do not accept a payload")
 
-			actionErr = match.startRound()
+		} else {
 
-		case opHit:
+			switch msg.GetOpCode() {
+			case opStart:
+				actionErr = match.startRound()
 
-			if match.round == nil { // Match is looping while not started
-				continue
+			case opHit:
+
+				if match.round == nil { // Match is looping while not started
+					actionErr = errors.New("round has not started yet")
+
+				} else {
+
+					actionErr = match.round.Hit()
+				}
+
+			case opStand:
+
+				if match.round == nil { // Match is looping while not started
+					actionErr = errors.New("round has not started yet")
+				} else {
+
+					actionErr = match.round.Stand()
+				}
+
+			case opGetState:
+
+			default:
+				actionErr = errors.New("unknown command")
 			}
-			actionErr = match.round.Hit()
-
-		case opStand:
-
-			if match.round == nil { // Match is looping while not started
-				continue
-			}
-			actionErr = match.round.Stand()
-
-		case opGetState:
-
-		default:
-			continue
 		}
 		if actionErr != nil {
 			logger.Warn(
@@ -114,6 +122,13 @@ func (m *BlackjackMatch) MatchLoop(
 				msg.GetOpCode(),
 				actionErr,
 			)
+			if err := match.sendError(
+				dispatcher,
+				msg.GetOpCode(),
+				actionErr.Error(),
+			); err != nil {
+				logger.Warn("Error reply delivery failed: %v", err)
+			}
 			continue
 		}
 
